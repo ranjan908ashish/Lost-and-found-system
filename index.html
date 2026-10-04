@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lost & Found Management System</title>
+<style>
+:root{--bg:#f5f6fa;--card:#fff;--tx:#1f2430;--mut:#6b7280;--pri:#c8102e;--acc:#1d4ed8;--bd:#e5e7eb;--ok:#15803d;--bad:#b91c1c}
+@media(prefers-color-scheme:dark){:root{--bg:#12141a;--card:#1b1f29;--tx:#e8eaf0;--mut:#9aa3b2;--bd:#2a3040}}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--tx)}
+header{background:var(--pri);color:#fff;padding:12px 20px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+header h1{font-size:1.1rem;margin:0}nav{display:flex;flex-wrap:wrap;gap:6px}
+button,.btn{background:var(--acc);color:#fff;border:0;border-radius:6px;padding:8px 14px;cursor:pointer;font-size:.9rem}
+nav button{background:rgba(255,255,255,.18)}nav button.on{background:#fff;color:var(--pri)}
+button.ok{background:var(--ok)}button.bad{background:var(--bad)}button.ghost{background:transparent;color:var(--acc);border:1px solid var(--acc)}
+main{max-width:980px;margin:20px auto;padding:0 14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:16px;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px}
+input,select,textarea{width:100%;padding:8px;margin:4px 0 10px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--tx);font:inherit}
+label{font-size:.85rem;color:var(--mut)}.row{display:flex;gap:10px;flex-wrap:wrap}.row>*{flex:1;min-width:140px}
+.tag{display:inline-block;font-size:.72rem;padding:2px 8px;border-radius:99px;color:#fff;margin-right:4px}
+.lost{background:var(--bad)}.found{background:var(--ok)}.st{background:var(--acc)}
+.mut{color:var(--mut);font-size:.85rem}img.ph{width:100%;max-height:150px;object-fit:cover;border-radius:6px;margin-bottom:8px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}.stats div{text-align:center;padding:12px;border:1px solid var(--bd);border-radius:8px}
+.stats b{display:block;font-size:1.6rem;color:var(--pri)}.note{position:fixed;bottom:16px;right:16px;background:#111;color:#fff;padding:10px 16px;border-radius:8px;display:none;z-index:9}
+.hide{display:none}
+</style>
+</head>
+<body>
+<header><h1>🔎 Lost &amp; Found Management System</h1><nav id="nav"></nav></header>
+<main id="app"></main>
+<div class="note" id="note"></div>
+<script>
+// ---------- Storage (localStorage = demo database) ----------
+const K='lf_db_v1';
+function load(){try{const d=JSON.parse(localStorage.getItem(K));if(d)return d}catch(e){}
+  return {users:[{id:1,name:'Administrator',email:'admin@lf.com',phone:'',pass:'admin123',role:'admin'}],items:[],claims:[],notes:[],me:null,seq:10}}
+function save(){try{localStorage.setItem(K,JSON.stringify(db))}catch(e){toast('Storage full / blocked')}}
+let db=load(),view='home';
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function toast(m){const n=$('#note');n.textContent=m;n.style.display='block';setTimeout(()=>n.style.display='none',2600)}
+const me=()=>db.users.find(u=>u.id===db.me);
+function notify(uid,msg){db.notes.unshift({id:db.seq++,uid,msg,at:new Date().toLocaleString()})}
+
+// ---------- Matching engine (Requirement 6) ----------
+function score(a,b){let s=0;if(a.category===b.category)s+=40;
+  if(a.color&&b.color&&a.color.toLowerCase()===b.color.toLowerCase())s+=20;
+  const w=t=>new Set((t||'').toLowerCase().split(/\W+/).filter(x=>x.length>2));
+  const A=new Set([...w(a.name),...w(a.desc)]),B=new Set([...w(b.name),...w(b.desc)]);
+  let c=0;A.forEach(x=>B.has(x)&&c++);s+=Math.min(30,c*10);
+  if(a.location&&b.location&&a.location.toLowerCase()===b.location.toLowerCase())s+=10;return s}
+function runMatch(item){db.items.filter(o=>o.type!==item.type&&o.status==='Active').forEach(o=>{
+  if(score(item,o)>=60){[item,o].forEach(x=>{if(x.status==='Active')x.status='Matched'});
+    notify(item.owner,`Possible match found for your ${item.type} item "${item.name}".`);
+    notify(o.owner,`Possible match found for your ${o.type} item "${o.name}".`)}})}
+
+// ---------- Navigation ----------
+function nav(){const u=me();const t=[['home','Home'],['search','Search']];
+  if(u){t.push(['lost','Report Lost'],['found','Report Found'],['mine','My Reports'],['notes','Notifications']);
+    if(u.role==='admin')t.push(['admin','Admin'])}
+  $('#nav').innerHTML=t.map(([k,l])=>`<button class="${view===k?'on':''}" onclick="go('${k}')">${l}</button>`).join('')+
+    (u?`<button onclick="logout()">Logout (${esc(u.name.split(' ')[0])})</button>`:`<button class="${view==='login'?'on':''}" onclick="go('login')">Login / Sign Up</button>`)}
+function go(v){view=v;render()}
+function render(){nav();const f={home,search,login,lost:()=>report('lost'),found:()=>report('found'),mine,notes,admin}[view];$('#app').innerHTML=f();if(view==='search')doSearch()}
+function guard(){if(!me()){toast('Please login first');view='login';return false}return true}
+
+// ---------- Auth (Req 1, 2) ----------
+function login(){return `<div class="row"><div class="card"><h3>Login</h3><label>Email</label><input id="le"><label>Password</label><input id="lp" type="password">
+<button onclick="doLogin()">Login</button><p class="mut">Demo admin: admin@lf.com / admin123</p></div>
+<div class="card"><h3>Sign Up</h3><label>Name</label><input id="rn"><label>Email</label><input id="re"><label>Mobile</label><input id="rm"><label>Password (min 6)</label><input id="rp" type="password">
+<button class="ok" onclick="doReg()">Create account</button></div></div>`}
+function doReg(){const n=$('#rn').value.trim(),e=$('#re').value.trim().toLowerCase(),m=$('#rm').value.trim(),p=$('#rp').value;
+  if(!n||!/^\S+@\S+\.\S+$/.test(e)||p.length<6)return toast('Enter valid name, email & 6+ char password');
+  if(db.users.some(u=>u.email===e))return toast('Email already registered');
+  const u={id:db.seq++,name:n,email:e,phone:m,pass:p,role:'user'};db.users.push(u);db.me=u.id;notify(u.id,'Registration successful. Welcome!');save();toast('Registered');go('home')}
+function doLogin(){const e=$('#le').value.trim().toLowerCase(),p=$('#lp').value;const u=db.users.find(x=>x.email===e&&x.pass===p);
+  if(!u)return toast('Invalid email or password');db.me=u.id;save();go(u.role==='admin'?'admin':'home')}
+function logout(){db.me=null;save();go('home')}
+
+// ---------- Home / stats ----------
+function home(){const i=db.items,r=i.filter(x=>x.status==='Returned').length;
+  return `<div class="card"><h2>Reunite people with their belongings</h2><p class="mut">Report a lost or found item, get auto-matched, and claim it securely after admin verification.</p>
+<div class="row" style="max-width:420px"><button onclick="go('lost')">I lost something</button><button class="ok" onclick="go('found')">I found something</button></div></div>
+<div class="stats"><div><b>${i.filter(x=>x.type==='lost').length}</b>Lost reports</div><div><b>${i.filter(x=>x.type==='found').length}</b>Found reports</div>
+<div><b>${i.filter(x=>x.status==='Matched').length}</b>Matched</div><div><b>${r}</b>Returned</div><div><b>${i.length?Math.round(r/i.length*100):0}%</b>Recovery rate</div></div>`}
+
+// ---------- Report (Req 3, 4) ----------
+const CATS=['ID Card','Wallet','Keys','Mobile / Electronics','Documents','Bag','Other'];
+let photo='';
+function report(t){if(!guard())return'';photo='';return `<div class="card"><h3>Report ${t==='lost'?'Lost':'Found'} Item</h3>
+<div class="row"><div><label>Item name *</label><input id="in"></div><div><label>Category *</label><select id="ic">${CATS.map(c=>`<option>${c}</option>`).join('')}</select></div></div>
+<div class="row"><div><label>Colour</label><input id="ico"></div><div><label>Location ${t} *</label><input id="il"></div><div><label>Date *</label><input id="id" type="date" value="${new Date().toISOString().slice(0,10)}"></div></div>
+<label>Description</label><textarea id="ids" rows="3"></textarea><label>Photo (optional)</label><input type="file" id="ip" accept="image/*" onchange="pic(this)">
+<button onclick="submitItem('${t}')">Submit report</button></div>`}
+function pic(el){const f=el.files[0];if(!f)return;if(f.size>1.5e6){el.value='';return toast('Photo must be under 1.5 MB')}
+  const r=new FileReader();r.onload=()=>photo=r.result;r.readAsDataURL(f)}
+function submitItem(t){const g=i=>$('#'+i).value.trim();const it={id:db.seq++,type:t,name:g('in'),category:g('ic'),color:g('ico'),location:g('il'),date:g('id'),desc:g('ids'),photo,owner:db.me,status:'Active',at:new Date().toLocaleString()};
+  if(!it.name||!it.location||!it.date)return toast('Fill all required fields');
+  db.items.push(it);notify(db.me,`Your ${t} report "${it.name}" was submitted.`);runMatch(it);save();toast('Report submitted (ID '+it.id+')');go('mine')}
+
+// ---------- Search (Req 5) ----------
+function search(){return `<div class="card"><div class="row"><div><label>Keyword</label><input id="sk" oninput="doSearch()" placeholder="e.g. black wallet"></div>
+<div><label>Type</label><select id="st" onchange="doSearch()"><option value="">All</option><option>lost</option><option>found</option></select></div>
+<div><label>Category</label><select id="sc" onchange="doSearch()"><option value="">All</option>${CATS.map(c=>`<option>${c}</option>`).join('')}</select></div>
+<div><label>Location</label><input id="sl" oninput="doSearch()"></div></div></div><div id="res" class="grid"></div>`}
+function doSearch(){const k=$('#sk').value.toLowerCase(),t=$('#st').value,c=$('#sc').value,l=$('#sl').value.toLowerCase();
+  const r=db.items.filter(i=>i.status!=='Returned'&&i.status!=='Rejected'&&(!t||i.type===t)&&(!c||i.category===c)&&(!l||i.location.toLowerCase().includes(l))&&(!k||(i.name+' '+i.desc+' '+i.color).toLowerCase().includes(k)));
+  $('#res').innerHTML=r.length?r.map(card).join(''):'<p class="mut">No matching items found.</p>'}
+function card(i){const u=me();const mine=u&&i.owner===u.id;const can=u&&!mine&&i.type==='found'&&['Active','Matched'].includes(i.status)&&!db.claims.some(c=>c.item===i.id&&c.by===u.id);
+  return `<div class="card">${i.photo?`<img class="ph" src="${i.photo}" alt="">`:''}<span class="tag ${i.type}">${i.type.toUpperCase()}</span><span class="tag st">${i.status}</span>
+<h4 style="margin:6px 0">${esc(i.name)}</h4><div class="mut">${esc(i.category)}${i.color?' • '+esc(i.color):''}<br>📍 ${esc(i.location)} • ${esc(i.date)}</div><p>${esc(i.desc)}</p>
+${can?`<button onclick="claimForm(${i.id})">Raise claim</button>`:''}</div>`}
+
+// ---------- Claims (Req 7) ----------
+function claimForm(id){if(!guard())return;const p=prompt('Describe proof of ownership (identification marks, purchase details, etc.):');if(!p||p.trim().length<5)return toast('Proof is required');
+  db.claims.push({id:db.seq++,item:id,by:db.me,proof:p.trim(),status:'Pending',at:new Date().toLocaleString()});
+  const it=db.items.find(x=>x.id===id);it.status='Claim Raised';notify(db.me,'Claim submitted. Awaiting admin verification.');
+  db.users.filter(u=>u.role==='admin').forEach(a=>notify(a.id,`Claim pending verification for "${it.name}".`));save();toast('Claim submitted');render()}
+function decide(cid,ok){const c=db.claims.find(x=>x.id===cid),it=db.items.find(x=>x.id===c.item);c.status=ok?'Approved':'Rejected';
+  if(ok){it.status='Returned';c.handover=new Date().toLocaleString();notify(c.by,`Claim approved for "${it.name}". Collect it from the admin office.`);notify(it.owner,`"${it.name}" has been handed over.`)}
+  else{it.status='Active';notify(c.by,`Claim rejected for "${it.name}" (insufficient proof).`)}save();render()}
+
+// ---------- User pages ----------
+function mine(){if(!guard())return'';const l=db.items.filter(i=>i.owner===db.me);
+  return `<h3>My Reports</h3><div class="grid">${l.map(i=>card(i)+'').join('')||'<p class="mut">No reports yet.</p>'}</div>
+<h3>My Claims</h3>${db.claims.filter(c=>c.by===db.me).map(c=>`<div class="card">${esc((db.items.find(i=>i.id===c.item)||{}).name)} — <b>${c.status}</b></div>`).join('')||'<p class="mut">No claims.</p>'}`}
+function notes(){if(!guard())return'';const n=db.notes.filter(x=>x.uid===db.me);
+  return `<h3>Notifications</h3>${n.map(x=>`<div class="card">${esc(x.msg)}<div class="mut">${x.at}</div></div>`).join('')||'<p class="mut">Nothing yet.</p>'}`}
+
+// ---------- Admin (Req 9) ----------
+function admin(){const u=me();if(!u||u.role!=='admin'){toast('Admin only');return home()}
+  const pend=db.claims.filter(c=>c.status==='Pending');
+  return `<h3>Pending claims</h3>${pend.map(c=>{const it=db.items.find(i=>i.id===c.item)||{},by=db.users.find(x=>x.id===c.by)||{};
+  return `<div class="card"><b>${esc(it.name)}</b> <span class="mut">claimed by ${esc(by.name)} (${esc(by.email)}, ${esc(by.phone)})</span><p>Proof: ${esc(c.proof)}</p>
+  <button class="ok" onclick="decide(${c.id},true)">Approve &amp; hand over</button> <button class="bad" onclick="decide(${c.id},false)">Reject</button></div>`}).join('')||'<p class="mut">No pending claims.</p>'}
+<h3>All reports</h3><div class="grid">${db.items.map(i=>card(i)+'').join('')}</div>
+<h3>Users (${db.users.length})</h3>${db.users.map(x=>`<div class="card">${esc(x.name)} — ${esc(x.email)} <span class="tag st">${x.role}</span>${x.role!=='admin'?` <button class="ghost" onclick="delUser(${x.id})">Remove</button>`:''}</div>`).join('')}
+<button class="bad" onclick="resetAll()">Reset demo data</button>`}
+function delUser(id){if(confirm('Remove user?')){db.users=db.users.filter(u=>u.id!==id);save();render()}}
+function resetAll(){if(confirm('Delete ALL data?')){localStorage.removeItem(K);db=load();go('home')}}
+render();
+</script>
+</body>
+</html>
